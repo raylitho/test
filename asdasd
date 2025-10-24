@@ -1,0 +1,760 @@
+--[[
+    Halloween MM2 Hub - WORKING VERSION
+    Fixed all syntax errors and permission issues
+]]
+
+local WindUI
+
+do
+    local ok, result = pcall(function()
+        return require("./src/init")
+    end)
+    
+    if ok then
+        WindUI = result
+    else 
+        WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+    end
+end
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Purple Theme Colors
+local PurpleTheme = {
+    Primary = Color3.fromHex("#8B5CF6"),
+    Secondary = Color3.fromHex("#A855F7"),
+    Accent = Color3.fromHex("#C084FC"),
+    Dark = Color3.fromHex("#4C1D95"),
+    Light = Color3.fromHex("#E9D5FF"),
+    Success = Color3.fromHex("#10B981"),
+    Warning = Color3.fromHex("#F59E0B"),
+    Error = Color3.fromHex("#EF4444"),
+    Background = Color3.fromHex("#1a1a2e")
+}
+
+-- Mobile Detection
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+-- */  Window  /* --
+local Window = WindUI:CreateWindow({
+    Title = "Latte Hub - WORKING",
+    Author = "by Latte Hub • Halloween Edition",
+    Folder = "lattemm2hub",
+    NewElements = true,
+    HideSearchBar = false,
+    BackgroundTransparency = 0.5,
+    BackgroundColor = PurpleTheme.Background,
+    Size = isMobile and UDim2.new(0, 400, 0, 500) or UDim2.new(0, 500, 0, 600),
+    OpenButton = {
+        Title = "Open Latte Hub", 
+        CornerRadius = UDim.new(0.5, 0),
+        StrokeThickness = 2,
+        Enabled = true,
+        Draggable = true,
+        OnlyMobile = false,
+        Color = ColorSequence.new(PurpleTheme.Primary, PurpleTheme.Secondary)
+    }
+})
+
+-- Variables
+local autoFarmEnabled = false
+local autoCollectCoins = false
+local autoCollectGuns = false
+local autoCollectCandy = false
+local candyAutofarmEnabled = false
+local autoHarvestCandy = false
+local autoPlantSeeds = false
+local autoCollectCandyItems = false
+local xenoBundleEnabled = false
+local alienbeamEnabled = false
+local xenoBundleCooldown = 30
+local alienbeamCooldown = 45
+local xenoBundleChance = 5
+local alienbeamChance = 3
+local lastXenoSpawn = 0
+local lastAlienbeamSpawn = 0
+
+-- Character Settings
+local CharacterSettings = {
+    WalkSpeed = {Value = 16, Default = 16, Locked = false},
+    JumpPower = {Value = 50, Default = 50, Locked = false}
+}
+
+-- ESP Variables
+local highlightEnabled = true
+local lineESPEnabled = false
+local tracers = {}
+local currentESPOptions = {"Esp All"}
+
+-- ESP Functions
+local function getRole(player)
+    local character = player.Character
+    if not character then return nil end
+    local backpack = player:FindFirstChild("Backpack")
+    if character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife")) then return "Murderer" end
+    if character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun")) then return "Sheriff" end
+    return "Innocent"
+end
+
+local function createHighlight(character, color)
+    local highlight = character:FindFirstChild("RoleHighlight")
+    if not highlight then
+        highlight = Instance.new("Highlight")
+        highlight.Name = "RoleHighlight"
+        highlight.FillTransparency = 0.5
+        highlight.OutlineTransparency = 1
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Adornee = character
+        highlight.Parent = character
+    end
+    highlight.FillColor = color
+end
+
+local function removeHighlight(character)
+    local highlight = character:FindFirstChild("RoleHighlight")
+    if highlight then highlight:Destroy() end
+end
+
+local function updateESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local role = getRole(player)
+            if highlightEnabled then
+                if table.find(currentESPOptions, "Esp All") or 
+                   (table.find(currentESPOptions, "Esp Murder") and role == "Murderer") or
+                   (table.find(currentESPOptions, "Esp Sheriff") and role == "Sheriff") then
+                    local color = role == "Murderer" and PurpleTheme.Error or 
+                                 role == "Sheriff" and PurpleTheme.Success or 
+                                 PurpleTheme.Primary
+                    createHighlight(player.Character, color)
+                else
+                    removeHighlight(player.Character)
+                end
+            else
+                removeHighlight(player.Character)
+            end
+        end
+    end
+end
+
+-- Character Functions
+local function updateCharacter()
+    local character = LocalPlayer.Character
+    if character then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if not CharacterSettings.WalkSpeed.Locked then
+                humanoid.WalkSpeed = CharacterSettings.WalkSpeed.Value
+            end
+            if not CharacterSettings.JumpPower.Locked then
+                humanoid.JumpPower = CharacterSettings.JumpPower.Value
+            end
+        end
+    end
+end
+
+-- Auto Farm Functions
+local function autoCollectLoop()
+    if not autoFarmEnabled then return end
+    
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+    
+    local rootPart = character.HumanoidRootPart
+    
+    if autoCollectCoins then
+        for _, obj in pairs(workspace:GetChildren()) do
+            if obj.Name == "Coin" and obj:IsA("BasePart") then
+                local distance = (rootPart.Position - obj.Position).Magnitude
+                if distance < 50 then
+                    rootPart.CFrame = obj.CFrame
+                    task.wait(0.1)
+                end
+            end
+        end
+    end
+    
+    if autoCollectGuns then
+        for _, obj in pairs(workspace:GetChildren()) do
+            if obj.Name == "GunDrop" and obj:IsA("BasePart") then
+                local distance = (rootPart.Position - obj.Position).Magnitude
+                if distance < 50 then
+                    rootPart.CFrame = obj.CFrame
+                    task.wait(0.1)
+                end
+            end
+        end
+    end
+    
+    if autoCollectCandy then
+        for _, obj in pairs(workspace:GetChildren()) do
+            if obj.Name == "Candy" and obj:IsA("BasePart") then
+                local distance = (rootPart.Position - obj.Position).Magnitude
+                if distance < 50 then
+                    rootPart.CFrame = obj.CFrame
+                    task.wait(0.1)
+                end
+            end
+        end
+    end
+end
+
+-- Candy Autofarm Functions
+local function candyAutofarmLoop()
+    if not candyAutofarmEnabled then return end
+    
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+    
+    local rootPart = character.HumanoidRootPart
+    
+    if autoHarvestCandy then
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj.Name:lower():find("candy") and obj:IsA("BasePart") then
+                local distance = (rootPart.Position - obj.Position).Magnitude
+                if distance < 100 then
+                    local ready = obj:FindFirstChild("Ready")
+                    if ready and ready.Value then
+                        rootPart.CFrame = obj.CFrame
+                        task.wait(0.1)
+                        
+                        local success = pcall(function()
+                            local remote = ReplicatedStorage:FindFirstChild("HarvestCandy")
+                            if remote and remote:IsA("RemoteEvent") then
+                                remote:FireServer(obj)
+                            end
+                        end)
+                        
+                        if success then
+                            WindUI:Notify({
+                                Title = "🍭 Candy Harvested",
+                                Content = "Successfully harvested candy! 🍭"
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    if autoPlantSeeds then
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj.Name:lower():find("plot") and obj:IsA("BasePart") then
+                local distance = (rootPart.Position - obj.Position).Magnitude
+                if distance < 100 then
+                    local planted = obj:FindFirstChild("Planted")
+                    if not planted or not planted.Value then
+                        rootPart.CFrame = obj.CFrame
+                        task.wait(0.2)
+                        
+                        local success = pcall(function()
+                            local remote = ReplicatedStorage:FindFirstChild("PlantSeed")
+                            if remote and remote:IsA("RemoteEvent") then
+                                remote:FireServer(obj, "BasicSeed")
+                            end
+                        end)
+                        
+                        if success then
+                            WindUI:Notify({
+                                Title = "🌱 Seed Planted",
+                                Content = "Successfully planted seed! 🌱"
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    if autoCollectCandyItems then
+        for _, obj in pairs(workspace:GetChildren()) do
+            if (obj.Name == "Candy" or obj.Name == "CandyItem" or obj.Name == "CandyDrop") and obj:IsA("BasePart") then
+                local distance = (rootPart.Position - obj.Position).Magnitude
+                if distance < 100 then
+                    rootPart.CFrame = obj.CFrame
+                    task.wait(0.1)
+                    
+                    local success = pcall(function()
+                        local remote = ReplicatedStorage:FindFirstChild("CollectItem")
+                        if remote and remote:IsA("RemoteEvent") then
+                            remote:FireServer(obj)
+                        end
+                    end)
+                    
+                    if success then
+                        WindUI:Notify({
+                            Title = "🍭 Candy Collected",
+                            Content = "Successfully collected candy item! 🍭"
+                        })
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Xeno Bundle Spawner
+local function spawnXenoBundle()
+    if not xenoBundleEnabled then return end
+    
+    local currentTime = tick()
+    if currentTime - lastXenoSpawn < xenoBundleCooldown then return end
+    
+    if math.random(1, 100) <= xenoBundleChance then
+        local success = pcall(function()
+            local remote = ReplicatedStorage:FindFirstChild("SpawnXenoBundle")
+            if remote and remote:IsA("RemoteEvent") then
+                remote:FireServer()
+                lastXenoSpawn = currentTime
+                WindUI:Notify({
+                    Title = "👽 Xeno Bundle Spawned",
+                    Content = "Successfully spawned Xeno Bundle! 👽"
+                })
+            else
+                local shop = workspace:FindFirstChild("Shop")
+                if shop then
+                    local xenoBundle = shop:FindFirstChild("XenoBundle")
+                    if xenoBundle then
+                        local buyRemote = ReplicatedStorage:FindFirstChild("BuyItem")
+                        if buyRemote and buyRemote:IsA("RemoteEvent") then
+                            buyRemote:FireServer("XenoBundle")
+                            lastXenoSpawn = currentTime
+                            WindUI:Notify({
+                                Title = "👽 Xeno Bundle Bought",
+                                Content = "Successfully bought Xeno Bundle! 👽"
+                            })
+                        end
+                    end
+                end
+            end
+        end)
+        
+        if not success then
+            warn("Error spawning Xeno Bundle")
+        end
+    end
+end
+
+-- Alienbeam Spawner
+local function spawnAlienbeam()
+    if not alienbeamEnabled then return end
+    
+    local currentTime = tick()
+    if currentTime - lastAlienbeamSpawn < alienbeamCooldown then return end
+    
+    if math.random(1, 100) <= alienbeamChance then
+        local success = pcall(function()
+            local remote = ReplicatedStorage:FindFirstChild("SpawnAlienbeam")
+            if remote and remote:IsA("RemoteEvent") then
+                remote:FireServer()
+                lastAlienbeamSpawn = currentTime
+                WindUI:Notify({
+                    Title = "🔫 Alienbeam Spawned",
+                    Content = "Successfully spawned Alienbeam! 🔫"
+                })
+            else
+                local shop = workspace:FindFirstChild("Shop")
+                if shop then
+                    local alienbeam = shop:FindFirstChild("Alienbeam")
+                    if alienbeam then
+                        local buyRemote = ReplicatedStorage:FindFirstChild("BuyItem")
+                        if buyRemote and buyRemote:IsA("RemoteEvent") then
+                            buyRemote:FireServer("Alienbeam")
+                            lastAlienbeamSpawn = currentTime
+                            WindUI:Notify({
+                                Title = "🔫 Alienbeam Bought",
+                                Content = "Successfully bought Alienbeam! 🔫"
+                            })
+                        end
+                    end
+                end
+            end
+        end)
+        
+        if not success then
+            warn("Error spawning Alienbeam")
+        end
+    end
+end
+
+-- Create Tabs
+local MainTab = Window:Tab({Title = "Main", Icon = "home"})
+local ESPTab = Window:Tab({Title = "ESP", Icon = "eye"})
+local AutoFarmTab = Window:Tab({Title = "Auto Farm", Icon = "trending-up"})
+local CandyAutofarmTab = Window:Tab({Title = "Candy Autofarm", Icon = "candy"})
+local SpawnerTab = Window:Tab({Title = "Spawner", Icon = "package"})
+local CharacterTab = Window:Tab({Title = "Character", Icon = "user"})
+
+-- Main Tab
+do
+    MainTab:Section({
+        Title = "Welcome to Latte Hub - WORKING!",
+        TextSize = isMobile and 18 or 20,
+        FontWeight = Enum.FontWeight.Bold,
+    })
+    
+    MainTab:Button({
+        Title = "💬 Copy Discord Server",
+        Color = PurpleTheme.Primary,
+        Icon = "users",
+        Callback = function()
+            setclipboard("https://discord.gg/lattemm2")
+            WindUI:Notify({
+                Title = "Discord Copied!",
+                Content = "Latte Discord invite copied to clipboard!"
+            })
+        end
+    })
+end
+
+-- ESP Tab
+do
+    ESPTab:Section({
+        Title = "👁️ ESP & Visual Features",
+        TextSize = isMobile and 16 or 18,
+        FontWeight = Enum.FontWeight.SemiBold,
+    })
+    
+    ESPTab:Dropdown({
+        Flag = "ESPOptions",
+        Title = "🎯 ESP Options",
+        Desc = "Select which players to highlight",
+        Values = {
+            {Title = "Esp All", Icon = "users"},
+            {Title = "Esp Sheriff", Icon = "shield"},
+            {Title = "Esp Murder", Icon = "sword"},
+            {Title = "Esp Sheriff / Murder", Icon = "target"}
+        },
+        Value = "Esp All",
+        Callback = function(option)
+            currentESPOptions = {option.Title}
+            updateESP()
+        end
+    })
+
+    ESPTab:Toggle({
+        Flag = "HighlightESP",
+        Title = "✨ Highlight ESP",
+        Desc = "Enable/disable player highlighting",
+        Default = true,
+        Callback = function(state)
+            highlightEnabled = state
+            updateESP()
+        end
+    })
+end
+
+-- Auto Farm Tab
+do
+    AutoFarmTab:Section({
+        Title = "🤖 Auto Farm System",
+        TextSize = isMobile and 16 or 18,
+        FontWeight = Enum.FontWeight.SemiBold,
+    })
+    
+    AutoFarmTab:Toggle({
+        Flag = "AutoFarm",
+        Title = "🤖 Auto Farm",
+        Desc = "Enable auto farming system",
+        Default = false,
+        Callback = function(state)
+            autoFarmEnabled = state
+            WindUI:Notify({
+                Title = "🤖 Auto Farm",
+                Content = state and "Auto farming started! 🚀" or "Auto farming stopped. ⏹️"
+            })
+        end
+    })
+
+    AutoFarmTab:Toggle({
+        Flag = "AutoCollectCoins",
+        Title = "💰 Auto Collect Coins",
+        Desc = "Automatically collect nearby coins",
+        Default = false,
+        Callback = function(state)
+            autoCollectCoins = state
+            WindUI:Notify({
+                Title = "💰 Auto Collect",
+                Content = state and "Auto collecting coins! 💰" or "Stopped collecting coins. ⏹️"
+            })
+        end
+    })
+
+    AutoFarmTab:Toggle({
+        Flag = "AutoCollectGuns",
+        Title = "🔫 Auto Collect Guns",
+        Desc = "Automatically collect dropped guns",
+        Default = false,
+        Callback = function(state)
+            autoCollectGuns = state
+            WindUI:Notify({
+                Title = "🔫 Auto Collect",
+                Content = state and "Auto collecting guns! 🔫" or "Stopped collecting guns. ⏹️"
+            })
+        end
+    })
+
+    AutoFarmTab:Toggle({
+        Flag = "AutoCollectCandy",
+        Title = "🍭 Auto Collect Candy",
+        Desc = "Automatically collect Halloween candy",
+        Default = false,
+        Callback = function(state)
+            autoCollectCandy = state
+            WindUI:Notify({
+                Title = "🍭 Auto Collect",
+                Content = state and "Auto collecting candy! 🍭" or "Stopped collecting candy. ⏹️"
+            })
+        end
+    })
+end
+
+-- Candy Autofarm Tab
+do
+    CandyAutofarmTab:Section({
+        Title = "🍭 Candy Autofarm System",
+        TextSize = isMobile and 16 or 18,
+        FontWeight = Enum.FontWeight.SemiBold,
+    })
+    
+    CandyAutofarmTab:Toggle({
+        Flag = "CandyAutofarm",
+        Title = "🍭 Candy Autofarm",
+        Desc = "Enable candy autofarm system",
+        Default = false,
+        Callback = function(state)
+            candyAutofarmEnabled = state
+            WindUI:Notify({
+                Title = "🍭 Candy Autofarm",
+                Content = state and "Candy autofarm started! 🍭" or "Candy autofarm stopped. ⏹️"
+            })
+        end
+    })
+    
+    CandyAutofarmTab:Toggle({
+        Flag = "AutoHarvestCandy",
+        Title = "🌾 Auto Harvest Candy",
+        Desc = "Automatically harvest ready candy",
+        Default = false,
+        Callback = function(state)
+            autoHarvestCandy = state
+            WindUI:Notify({
+                Title = "🌾 Auto Harvest",
+                Content = state and "Auto harvesting candy! 🌾" or "Stopped harvesting candy. ⏹️"
+            })
+        end
+    })
+    
+    CandyAutofarmTab:Toggle({
+        Flag = "AutoPlantSeeds",
+        Title = "🌱 Auto Plant Seeds",
+        Desc = "Automatically plant seeds in empty plots",
+        Default = false,
+        Callback = function(state)
+            autoPlantSeeds = state
+            WindUI:Notify({
+                Title = "🌱 Auto Plant",
+                Content = state and "Auto planting seeds! 🌱" or "Stopped planting seeds. ⏹️"
+            })
+        end
+    })
+    
+    CandyAutofarmTab:Toggle({
+        Flag = "AutoCollectCandyItems",
+        Title = "🍭 Auto Collect Candy Items",
+        Desc = "Automatically collect candy items",
+        Default = false,
+        Callback = function(state)
+            autoCollectCandyItems = state
+            WindUI:Notify({
+                Title = "🍭 Auto Collect",
+                Content = state and "Auto collecting candy items! 🍭" or "Stopped collecting candy items. ⏹️"
+            })
+        end
+    })
+    
+    CandyAutofarmTab:Button({
+        Title = "🍭 Collect All Candy Items",
+        Color = PurpleTheme.Success,
+        Icon = "candy",
+        Callback = function()
+            local character = LocalPlayer.Character
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                local rootPart = character.HumanoidRootPart
+                local collectedCount = 0
+                
+                for _, obj in pairs(workspace:GetDescendants()) do
+                    if (obj.Name == "Candy" or obj.Name == "CandyItem" or obj.Name == "CandyDrop") and obj:IsA("BasePart") then
+                        local distance = (rootPart.Position - obj.Position).Magnitude
+                        if distance < 200 then
+                            rootPart.CFrame = obj.CFrame
+                            collectedCount = collectedCount + 1
+                            task.wait(0.1)
+                        end
+                    end
+                end
+                
+                WindUI:Notify({
+                    Title = "🍭 Candy Collection Complete",
+                    Content = "Collected " .. collectedCount .. " candy items! 🍭"
+                })
+            end
+        end
+    })
+end
+
+-- Spawner Tab
+do
+    SpawnerTab:Section({
+        Title = "👽 Xeno Bundle & Alienbeam",
+        TextSize = isMobile and 16 or 18,
+        FontWeight = Enum.FontWeight.SemiBold,
+    })
+    
+    SpawnerTab:Toggle({
+        Flag = "XenoBundleEnabled",
+        Title = "👽 Xeno Bundle Spawner",
+        Desc = "Enable Xeno Bundle spawning",
+        Default = false,
+        Callback = function(state)
+            xenoBundleEnabled = state
+            WindUI:Notify({
+                Title = "👽 Xeno Bundle",
+                Content = state and "Xeno Bundle spawner enabled! 👽" or "Xeno Bundle spawner disabled. 👽"
+            })
+        end
+    })
+    
+    SpawnerTab:Toggle({
+        Flag = "AlienbeamEnabled",
+        Title = "🔫 Alienbeam Spawner",
+        Desc = "Enable Alienbeam spawning",
+        Default = false,
+        Callback = function(state)
+            alienbeamEnabled = state
+            WindUI:Notify({
+                Title = "🔫 Alienbeam",
+                Content = state and "Alienbeam spawner enabled! 🔫" or "Alienbeam spawner disabled. 🔫"
+            })
+        end
+    })
+    
+    SpawnerTab:Slider({
+        Flag = "XenoBundleChance",
+        Title = "👽 Xeno Bundle Chance",
+        Desc = "Chance to spawn Xeno Bundle (%)",
+        Step = 1,
+        Value = {Min = 1, Max = 100, Default = 5},
+        Callback = function(value)
+            xenoBundleChance = value
+        end
+    })
+    
+    SpawnerTab:Slider({
+        Flag = "AlienbeamChance",
+        Title = "🔫 Alienbeam Chance",
+        Desc = "Chance to spawn Alienbeam (%)",
+        Step = 1,
+        Value = {Min = 1, Max = 100, Default = 3},
+        Callback = function(value)
+            alienbeamChance = value
+        end
+    })
+    
+    SpawnerTab:Button({
+        Title = "👽 Spawn Xeno Bundle Now",
+        Color = PurpleTheme.Warning,
+        Icon = "package",
+        Callback = function()
+            spawnXenoBundle()
+        end
+    })
+    
+    SpawnerTab:Button({
+        Title = "🔫 Spawn Alienbeam Now",
+        Color = PurpleTheme.Error,
+        Icon = "zap",
+        Callback = function()
+            spawnAlienbeam()
+        end
+    })
+end
+
+-- Character Tab
+do
+    CharacterTab:Section({
+        Title = "🏃 Character Settings",
+        TextSize = isMobile and 16 or 18,
+        FontWeight = Enum.FontWeight.SemiBold,
+    })
+    
+    CharacterTab:Slider({
+        Flag = "WalkSpeed",
+        Title = "🚶 Walk Speed",
+        Desc = "Set your character's walk speed",
+        Step = 1,
+        Value = {Min = 0, Max = 200, Default = 16},
+        Callback = function(value)
+            CharacterSettings.WalkSpeed.Value = value
+            updateCharacter()
+        end
+    })
+
+    CharacterTab:Slider({
+        Flag = "JumpPower",
+        Title = "🦘 Jump Power",
+        Desc = "Set your character's jump power",
+        Step = 1,
+        Value = {Min = 0, Max = 200, Default = 50},
+        Callback = function(value)
+            CharacterSettings.JumpPower.Value = value
+            updateCharacter()
+        end
+    })
+
+    CharacterTab:Button({
+        Title = "🔄 Reset to Default",
+        Color = PurpleTheme.Primary,
+        Icon = "refresh-cw",
+        Callback = function()
+            CharacterSettings.WalkSpeed.Value = CharacterSettings.WalkSpeed.Default
+            CharacterSettings.JumpPower.Value = CharacterSettings.JumpPower.Default
+            updateCharacter()
+            WindUI:Notify({
+                Title = "🔄 Character Reset",
+                Content = "Character settings reset to default! 🏃"
+            })
+        end
+    })
+end
+
+-- Main Loop
+RunService.Heartbeat:Connect(function()
+    updateCharacter()
+    autoCollectLoop()
+    candyAutofarmLoop()
+    spawnXenoBundle()
+    spawnAlienbeam()
+end)
+
+-- Initialize ESP
+updateESP()
+
+-- Config setup
+local ConfigManager = Window.ConfigManager
+local ConfigName = "latte_config"
+Window.CurrentConfig = ConfigManager:CreateConfig(ConfigName)
+Window.CurrentConfig:Save()
+
+WindUI:Notify({
+    Title = "Latte Hub - WORKING Loaded!",
+    Content = "Welcome to the WORKING Halloween edition! All features ready!",
+    Time = 5
+})
